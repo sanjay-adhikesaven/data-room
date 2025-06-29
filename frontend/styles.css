@@ -1,6 +1,6 @@
 *{box-sizing:border-box;font-family:system-ui, sans-serif}
 body{margin:0;display:flex;flex-direction:column;height:100vh}
-header{padding:0.5rem 1rem;background:#222;color:#fff;display:flex;gap:0.5rem;align-items:center}
+header{padding:0.5rem 1rem;background:#222;color:#fff;display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap}
 header button{background:#444;border:1px solid #666;color:#fff;border-radius:4px;transition:all 0.2s ease;cursor:pointer;padding:0.6rem 1.2rem;font-size:0.9rem}
 header button:hover{background:#555;transform:translateY(-1px);box-shadow:0 2px 4px rgba(0,0,0,0.2)}
 header button:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:none}
@@ -9,6 +9,52 @@ header button:disabled{opacity:0.6;cursor:not-allowed;transform:none;box-shadow:
 #upload-btn:disabled{background:#6b7280 !important;border-color:#9ca3af !important}
 #refresh-btn{background:#2d5a2d !important;border-color:#4a7c4a !important}
 #refresh-btn:hover{background:#3a6b3a !important}
+
+/* Username section styles */
+.user-section {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  margin-right: 1rem;
+}
+
+#username-input {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #666;
+  border-radius: 4px;
+  background: #333;
+  color: #fff;
+  font-size: 0.9rem;
+  min-width: 150px;
+}
+
+#username-input::placeholder {
+  color: #999;
+}
+
+#username-input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  background: #444;
+}
+
+#set-username-btn {
+  background: #059669 !important;
+  border-color: #10b981 !important;
+  font-weight: 500;
+  padding: 0.5rem 1rem !important;
+}
+
+#set-username-btn:hover {
+  background: #047857 !important;
+}
+
+#set-username-btn:disabled {
+  background: #6b7280 !important;
+  border-color: #9ca3af !important;
+}
+
 main{flex:1;display:flex;height:calc(100vh - 60px);min-height:0}
 #doc-list{width:300px;border-right:1px solid #ddd;padding:1rem;overflow-y:auto;max-height:100%;display:flex;flex-direction:column}
 #doc-list h2{margin:0 0 1rem 0;flex-shrink:0}

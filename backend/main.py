@@ -4,13 +4,13 @@ import json
 from typing import List
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 import openai
 
-from utils import add_document, search, get_all_documents, delete_document, DOCS_DIR
+from utils import add_document, search, get_all_documents, delete_document, _get_user_dirs
 
 # Expect your key in the environment, e.g.  export OPENAI_API_KEY="sk-…"
 openai.api_key = os.getenv("OPENAI_API_KEY")
@@ -28,15 +28,19 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     query: str
+    username: str
 
 
 @app.post("/upload")
-async def upload_docs(files: List[UploadFile] = File(...)):
+async def upload_docs(files: List[UploadFile] = File(...), username: str = Query(..., description="Username for data isolation")):
     """
     Ingest one or more documents, chunk + embed each, and return metadata
-    so the UI can list them.
+    so the UI can list them. All data is stored user-specific.
     """
-    docs_info = [add_document(f) for f in files]
+    if not username or username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
+    docs_info = [add_document(f, username) for f in files]
     return {"status": "ok", "docs": docs_info}
 
 
@@ -130,8 +134,11 @@ async def chat(req: ChatRequest):
     (1) semantic search → (2) build RAG prompt → (3) call GPT-4o with streaming →
     (4) return streamed answer + raw citation metadata.
     """
+    if not req.username or req.username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
     # 1. Retrieve candidate chunks
-    sources = search(req.query, top_k=10)
+    sources = search(req.query, req.username, top_k=10)
 
     # Check if no documents are available
     if not sources:
@@ -159,8 +166,11 @@ async def chat_sync(req: ChatRequest):
     (1) semantic search → (2) build RAG prompt → (3) call GPT-4o →
     (4) return answer + raw citation metadata.
     """
+    if not req.username or req.username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
     # 1. Retrieve candidate chunks
-    sources = search(req.query, top_k=10)
+    sources = search(req.query, req.username, top_k=10)
 
     # Check if no documents are available
     if not sources:
@@ -193,12 +203,16 @@ async def chat_sync(req: ChatRequest):
 
 
 @app.get("/download/{doc_id}")
-async def download_document(doc_id: str):
+async def download_document(doc_id: str, username: str = Query(..., description="Username for data isolation")):
     """
-    Download a document by its doc_id.
+    Download a document by its doc_id for a specific user.
     """
-    # Find the document file in the docs directory
-    doc_files = list(DOCS_DIR.glob(f"{doc_id}_*"))
+    if not username or username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
+    # Find the document file in the user's docs directory
+    docs_dir, _ = _get_user_dirs(username)
+    doc_files = list(docs_dir.glob(f"{doc_id}_*"))
     if not doc_files:
         raise HTTPException(status_code=404, detail="Document not found")
     
@@ -211,14 +225,17 @@ async def download_document(doc_id: str):
 
 
 @app.get("/source/{doc_id}/{chunk_id}")
-async def get_source_text(doc_id: str, chunk_id: int, highlight: str = None, query: str = None):
+async def get_source_text(doc_id: str, chunk_id: int, username: str = Query(..., description="Username for data isolation"), highlight: str = None, query: str = None):
     """
     Get source text for a specific document chunk for citation viewing.
     Optionally highlight specific text within the chunk.
     """
+    if not username or username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
     from utils import _get_index
     
-    index, metadata = _get_index()
+    index, metadata = _get_index(username)
     
     # Find the specific chunk
     for meta in metadata:
@@ -262,13 +279,16 @@ async def get_source_text(doc_id: str, chunk_id: int, highlight: str = None, que
 
 
 @app.get("/document/{doc_id}")
-async def get_document_text(doc_id: str):
+async def get_document_text(doc_id: str, username: str = Query(..., description="Username for data isolation")):
     """
     Get the full document text for document viewing.
     """
+    if not username or username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
     from utils import _get_index
     
-    index, metadata = _get_index()
+    index, metadata = _get_index(username)
     
     # Find all chunks for this document
     document_chunks = [meta for meta in metadata if meta["doc_id"] == doc_id]
@@ -303,21 +323,27 @@ async def get_document_text(doc_id: str):
 
 
 @app.get("/documents")
-async def get_documents():
+async def get_documents(username: str = Query(..., description="Username for data isolation")):
     """
-    Get all documents currently in the index.
+    Get all documents currently in the index for a specific user.
     """
-    documents = get_all_documents()
+    if not username or username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
+    documents = get_all_documents(username)
     return {"documents": documents}
 
 
 @app.delete("/document/{doc_id}")
-async def delete_document_endpoint(doc_id: str):
+async def delete_document_endpoint(doc_id: str, username: str = Query(..., description="Username for data isolation")):
     """
-    Delete a document and all its chunks from the FAISS index.
+    Delete a document and all its chunks from the FAISS index for a specific user.
     """
+    if not username or username.strip() == "":
+        raise HTTPException(status_code=400, detail="Username is required")
+    
     try:
-        success = delete_document(doc_id)
+        success = delete_document(doc_id, username)
         if success:
             return {"status": "ok", "message": f"Document {doc_id} deleted successfully"}
         else:

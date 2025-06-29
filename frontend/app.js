@@ -6,6 +6,14 @@ const docList = document.querySelector("#doc-list ul");
 const chatForm = document.getElementById("chat-form");
 const chatInput = document.getElementById("chat-input");
 const messagesDiv = document.getElementById("messages");
+const usernameInput = document.getElementById("username-input");
+const setUsernameBtn = document.getElementById("set-username-btn");
+
+// Global username variable
+let currentUsername = localStorage.getItem("username") || "";
+
+// Initialize username input
+usernameInput.value = currentUsername;
 
 // Create modal for citation viewing
 const modal = document.createElement("div");
@@ -47,6 +55,49 @@ documentModal.innerHTML = `
   </div>
 `;
 document.body.appendChild(documentModal);
+
+// Username functionality
+function setUsername() {
+  const username = usernameInput.value.trim();
+  if (!username) {
+    alert("Please enter a username");
+    return;
+  }
+  
+  currentUsername = username;
+  localStorage.setItem("username", username);
+  setUsernameBtn.textContent = "✓ Set";
+  setUsernameBtn.disabled = true;
+  
+  // Reload documents for the new user
+  loadAllDocuments();
+  
+  // Clear chat
+  messagesDiv.innerHTML = "";
+  addMessage("Username set to: " + username + ". You can now upload documents and start chatting!", "bot");
+  
+  // Re-enable button after 2 seconds
+  setTimeout(() => {
+    setUsernameBtn.textContent = "Set Username";
+    setUsernameBtn.disabled = false;
+  }, 2000);
+}
+
+function checkUsername() {
+  if (!currentUsername) {
+    alert("Please set a username first");
+    return false;
+  }
+  return true;
+}
+
+// Event listeners for username
+setUsernameBtn.addEventListener("click", setUsername);
+usernameInput.addEventListener("keypress", (e) => {
+  if (e.key === "Enter") {
+    setUsername();
+  }
+});
 
 // Citation parsing regex - matches [Doc:filename-chunkN-docId]
 const citationRegex = /\[Doc:([^-]+)-chunk(\d+)-([^\]]+)\]/g;
@@ -128,6 +179,7 @@ async function showCitationModal(citation) {
     
     // Build URL with query parameter for highlighting
     const url = new URL(`${API_BASE}/source/${citation.docId}/${citation.chunkId}`);
+    url.searchParams.set('username', currentUsername);
     if (originalQuery) {
       url.searchParams.set('query', originalQuery);
     }
@@ -234,7 +286,7 @@ uploadBtn.addEventListener("click", () => {
 
 async function showDocumentModal(docId, docName) {
   try {
-    const response = await fetch(`${API_BASE}/document/${docId}`);
+    const response = await fetch(`${API_BASE}/document/${docId}?username=${encodeURIComponent(currentUsername)}`);
     const data = await response.json();
     
     document.getElementById('document-modal-title').textContent = `Document: ${data.doc_name}`;
@@ -247,7 +299,7 @@ async function showDocumentModal(docId, docName) {
         <p><strong>Document ID:</strong> ${data.doc_id}</p>
         <p><strong>Total Chunks:</strong> ${data.total_chunks}</p>
         <p><strong>Text Length:</strong> ${data.total_length.toLocaleString()} characters</p>
-        <p><strong>Download:</strong> <a href="${API_BASE}/download/${data.doc_id}" target="_blank">Original File</a></p>
+        <p><strong>Download:</strong> <a href="${API_BASE}/download/${data.doc_id}?username=${encodeURIComponent(currentUsername)}" target="_blank">Original File</a></p>
       </div>
     `;
     
@@ -365,15 +417,18 @@ function setupDocumentSearch() {
 }
 
 async function uploadFiles(files) {
+  if (!checkUsername()) return;
+  
   const fd = new FormData();
   [...files].forEach(f => fd.append("files", f));
+  fd.append("username", currentUsername);
   
   // Update button state
   uploadBtn.disabled = true;
   uploadBtn.textContent = "Uploading…";
   
   try {
-    const res = await fetch(`${API_BASE}/upload`, { method: "POST", body: fd });
+    const res = await fetch(`${API_BASE}/upload?username=${encodeURIComponent(currentUsername)}`, { method: "POST", body: fd });
     const data = await res.json();
     
     // Refresh the entire document list to show all documents
@@ -395,6 +450,8 @@ async function uploadFiles(files) {
 
 chatForm.addEventListener("submit", async e => {
   e.preventDefault();
+  if (!checkUsername()) return;
+  
   const q = chatInput.value.trim();
   if (!q) return;
   addMessage(q, "user");
@@ -411,7 +468,7 @@ chatForm.addEventListener("submit", async e => {
     const response = await fetch(`${API_BASE}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query: q })
+      body: JSON.stringify({ query: q, username: currentUsername })
     });
     
     if (!response.ok) {
@@ -499,8 +556,14 @@ refreshBtn.addEventListener("click", refreshChat);
 
 // Load all documents on startup
 async function loadAllDocuments() {
+  if (!currentUsername) {
+    // Don't load documents if no username is set
+    docList.innerHTML = "";
+    return;
+  }
+  
   try {
-    const response = await fetch(`${API_BASE}/documents`);
+    const response = await fetch(`${API_BASE}/documents?username=${encodeURIComponent(currentUsername)}`);
     const data = await response.json();
     
     // Clear existing list
@@ -552,7 +615,7 @@ async function loadAllDocuments() {
     });
     
     if (data.documents.length > 0) {
-      console.log(`Loaded ${data.documents.length} documents from index`);
+      console.log(`Loaded ${data.documents.length} documents from index for user '${currentUsername}'`);
     }
   } catch (error) {
     console.error("Error loading documents:", error);
@@ -562,7 +625,7 @@ async function loadAllDocuments() {
 // Function to delete a document
 async function deleteDocument(docId, docName) {
   try {
-    const response = await fetch(`${API_BASE}/document/${docId}`, {
+    const response = await fetch(`${API_BASE}/document/${docId}?username=${encodeURIComponent(currentUsername)}`, {
       method: 'DELETE'
     });
     
@@ -576,7 +639,7 @@ async function deleteDocument(docId, docName) {
       // Show success message
       addMessage(`Successfully deleted "${docName}"`, "bot");
       
-      console.log(`Deleted document: ${docName}`);
+      console.log(`Deleted document: ${docName} for user '${currentUsername}'`);
     } else {
       const errorData = await response.json();
       throw new Error(errorData.detail || 'Failed to delete document');
@@ -589,5 +652,10 @@ async function deleteDocument(docId, docName) {
 
 // Initialize the application
 document.addEventListener('DOMContentLoaded', () => {
-  loadAllDocuments();
+  if (currentUsername) {
+    loadAllDocuments();
+    addMessage(`Welcome back, ${currentUsername}! You can upload documents and start chatting.`, "bot");
+  } else {
+    addMessage("Please set a username to get started. Enter your username in the field above and click 'Set Username'.", "bot");
+  }
 });

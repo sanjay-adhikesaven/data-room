@@ -13,13 +13,20 @@ from sentence_transformers import SentenceTransformer
 from pdfminer.high_level import extract_text as pdfminer_extract
 CHUNK_SIZE = 3000  # ~ characters
 EMBED_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-DOCS_DIR = Path("data/docs")
-INDEX_DIR = Path("data/index")
+BASE_DATA_DIR = Path("data")
 
-# In-memory storage (with disk persistence)
+# In-memory storage (with disk persistence) - now user-specific
 model = None
-index = None
-metadata = None  # list[dict]
+user_indices = {}  # username -> (index, metadata)
+user_metadata = {}  # username -> list[dict]
+
+
+def _get_user_dirs(username: str):
+    """Get user-specific directories for documents and index."""
+    user_data_dir = BASE_DATA_DIR / "users" / username
+    docs_dir = user_data_dir / "docs"
+    index_dir = user_data_dir / "index"
+    return docs_dir, index_dir
 
 
 def _load_model():
@@ -29,48 +36,58 @@ def _load_model():
     return model
 
 
-def _get_index():
-    """Get or create FAISS index + metadata (loads from disk if available)."""
-    global index, metadata
-    if index is None:
+def _get_index(username: str):
+    """Get or create FAISS index + metadata for a specific user (loads from disk if available)."""
+    global user_indices, user_metadata
+    
+    if username not in user_indices:
         # Try to load from disk first
-        if _load_index_from_disk():
-            print(f"Loaded existing index with {index.ntotal} vectors and {len(metadata)} metadata entries")
+        if _load_index_from_disk(username):
+            index, metadata = user_indices[username]
+            print(f"Loaded existing index for user '{username}' with {index.ntotal} vectors and {len(metadata)} metadata entries")
         else:
             # Create new index if no saved data exists
             index = faiss.IndexFlatIP(384)  # MiniLM dims = 384
             metadata = []
-            print("Created new FAISS index")
-    return index, metadata
+            user_indices[username] = (index, metadata)
+            user_metadata[username] = metadata
+            print(f"Created new FAISS index for user '{username}'")
+    
+    return user_indices[username]
 
 
-def _save_index_to_disk():
-    """Save FAISS index and metadata to disk."""
-    global index, metadata
+def _save_index_to_disk(username: str):
+    """Save FAISS index and metadata to disk for a specific user."""
+    if username not in user_indices:
+        return False
+    
+    index, metadata = user_indices[username]
     if index is None or metadata is None:
         return False
     
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
+    docs_dir, index_dir = _get_user_dirs(username)
+    index_dir.mkdir(parents=True, exist_ok=True)
     
     # Save FAISS index
-    index_path = INDEX_DIR / "faiss_index.bin"
+    index_path = index_dir / "faiss_index.bin"
     faiss.write_index(index, str(index_path))
     
     # Save metadata
-    metadata_path = INDEX_DIR / "metadata.pkl"
+    metadata_path = index_dir / "metadata.pkl"
     with open(metadata_path, 'wb') as f:
         pickle.dump(metadata, f)
     
-    print(f"Saved index with {index.ntotal} vectors and {len(metadata)} metadata entries to disk")
+    print(f"Saved index for user '{username}' with {index.ntotal} vectors and {len(metadata)} metadata entries to disk")
     return True
 
 
-def _load_index_from_disk():
-    """Load FAISS index and metadata from disk."""
-    global index, metadata
+def _load_index_from_disk(username: str):
+    """Load FAISS index and metadata from disk for a specific user."""
+    global user_indices, user_metadata
     
-    index_path = INDEX_DIR / "faiss_index.bin"
-    metadata_path = INDEX_DIR / "metadata.pkl"
+    docs_dir, index_dir = _get_user_dirs(username)
+    index_path = index_dir / "faiss_index.bin"
+    metadata_path = index_dir / "metadata.pkl"
     
     if not index_path.exists() or not metadata_path.exists():
         return False
@@ -83,18 +100,20 @@ def _load_index_from_disk():
         with open(metadata_path, 'rb') as f:
             metadata = pickle.load(f)
         
+        user_indices[username] = (index, metadata)
+        user_metadata[username] = metadata
         return True
     except Exception as e:
-        print(f"Error loading index from disk: {e}")
+        print(f"Error loading index from disk for user '{username}': {e}")
         return False
 
 
-def get_all_documents():
-    """Get list of all unique documents in the index."""
-    global index, metadata
-    if index is None:
-        _get_index()
+def get_all_documents(username: str):
+    """Get list of all unique documents in the index for a specific user."""
+    if username not in user_indices:
+        _get_index(username)
     
+    metadata = user_metadata.get(username, [])
     if not metadata:
         return []
     
@@ -191,11 +210,12 @@ def _extract_pdf_text(raw: bytes, filename: str) -> str:
 
 # ---------- Chunk + embed ----------
 
-def add_document(file: UploadFile, chunk_documents: bool = True):
+def add_document(file: UploadFile, username: str, chunk_documents: bool = True):
     text, raw = _extract_text(file)
     doc_id = str(uuid.uuid4())
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
-    doc_path = DOCS_DIR / f"{doc_id}_{file.filename}"
+    docs_dir, _ = _get_user_dirs(username)
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    doc_path = docs_dir / f"{doc_id}_{file.filename}"
     with open(doc_path, "wb") as f:
         f.write(raw)
 
@@ -208,7 +228,7 @@ def add_document(file: UploadFile, chunk_documents: bool = True):
     
     embeds = _load_model().encode(chunks, convert_to_numpy=True, normalize_embeddings=True)
 
-    index, metadata = _get_index()
+    index, metadata = _get_index(username)
     index.add(embeds)
     for i, chunk in enumerate(chunks):
         metadata.append({
@@ -220,13 +240,13 @@ def add_document(file: UploadFile, chunk_documents: bool = True):
         })
 
     # Save the updated index to disk
-    _save_index_to_disk()
+    _save_index_to_disk(username)
 
     return {"doc_id": doc_id, "name": file.filename}
 
 
-def search(query: str, top_k: int = 10):
-    index, metadata = _get_index()
+def search(query: str, username: str, top_k: int = 10):
+    index, metadata = _get_index(username)
     if index.ntotal == 0:
         return []
     query_vec = _load_model().encode([query], convert_to_numpy=True, normalize_embeddings=True)
@@ -244,16 +264,17 @@ def search(query: str, top_k: int = 10):
     return results
 
 
-def delete_document(doc_id: str) -> bool:
+def delete_document(doc_id: str, username: str) -> bool:
     """
-    Delete a document and all its chunks from the FAISS index.
+    Delete a document and all its chunks from the FAISS index for a specific user.
     Returns True if document was found and deleted, False otherwise.
     """
-    global index, metadata
+    global user_indices, user_metadata
     
-    if index is None:
-        _get_index()
+    if username not in user_indices:
+        _get_index(username)
     
+    metadata = user_metadata.get(username, [])
     if not metadata:
         return False
     
@@ -289,13 +310,15 @@ def delete_document(doc_id: str) -> bool:
         new_index.add(remaining_embeds)
         
         # Replace the old index
-        index = new_index
+        user_indices[username] = (new_index, metadata)
     else:
         # No documents left, create empty index
-        index = faiss.IndexFlatIP(384)
+        new_index = faiss.IndexFlatIP(384)
+        user_indices[username] = (new_index, metadata)
     
     # Delete the document file from disk
-    doc_files = list(DOCS_DIR.glob(f"{doc_id}_*"))
+    docs_dir, _ = _get_user_dirs(username)
+    doc_files = list(docs_dir.glob(f"{doc_id}_*"))
     for doc_file in doc_files:
         try:
             doc_file.unlink()
@@ -304,7 +327,7 @@ def delete_document(doc_id: str) -> bool:
             print(f"Error deleting file {doc_file}: {e}")
     
     # Save the updated index to disk
-    _save_index_to_disk()
+    _save_index_to_disk(username)
     
-    print(f"Deleted document {doc_id} with {len(chunks_to_remove)} chunks")
+    print(f"Deleted document {doc_id} with {len(chunks_to_remove)} chunks for user '{username}'")
     return True

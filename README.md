@@ -19,7 +19,6 @@ A knowledge base chat application that uses RAG (Retrieval-Augmented Generation)
    ```
 
 3. Open http://localhost:8080 in your browser
-```
 
 ## Features
 
