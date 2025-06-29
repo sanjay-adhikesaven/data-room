@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Smart Knowledge Base</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>📚 Delve Data Room</h1>
+      <input id="file-input" type="file" multiple style="display: none;" />
+      <button id="upload-btn">Upload</button>
+      <button id="refresh-btn">🔄 Refresh Chat</button>
+    </header>
+
+    <main>
+      <aside id="doc-list"><h2>Documents</h2><ul></ul></aside>
+      <section id="chat">
+        <div id="messages"></div>
+        <form id="chat-form">
+          <input id="chat-input" placeholder="Ask a question…" autocomplete="off" />
+          <button>Send</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
